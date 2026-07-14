@@ -1,27 +1,4 @@
-"""
-analyzer.py
------------
-Core static-analysis logic.
 
-Everything here works by walking the AST produced by `parser.py` --
-never by scanning the raw text or using regular expressions.
-
-The analyzer looks for a handful of well-known "interview code" shapes:
-
-  * for / while loops, and how deeply they nest
-  * a while-loop that halves/doubles a variable each iteration
-    (binary-search / log-time pattern), e.g. `while n > 1: n //= 2`
-  * sorted() / list.sort() calls (O(n log n))
-  * list / dict / set literals and comprehensions (O(n) space)
-  * recursive function definitions, and whether a function calls
-    itself once (linear recursion) or more than once (branching /
-    exponential recursion, e.g. naive Fibonacci)
-
-It then combines those signals into a single Big-O estimate for time
-and space. This is deliberately heuristic -- the goal is "usually
-right for textbook interview snippets", not a provably-correct
-static analyzer.
-"""
 
 import ast
 from dataclasses import dataclass, field
@@ -30,23 +7,22 @@ from typing import List, Dict, Set
 
 @dataclass
 class Findings:
-    """Container for everything the visitors discover in the code."""
 
     max_loop_depth: int = 0
     loop_lines: List[int] = field(default_factory=list)
 
-    log_pattern_lines: List[int] = field(default_factory=list)   # while n //= 2 style
-    sort_lines: List[int] = field(default_factory=list)          # sorted() / .sort()
-    space_lines: List[int] = field(default_factory=list)         # list/dict/set creation
+    log_pattern_lines: List[int] = field(default_factory=list)   
+    sort_lines: List[int] = field(default_factory=list)          
+    space_lines: List[int] = field(default_factory=list)         
 
     recursion_detected: bool = False
     recursive_lines: List[int] = field(default_factory=list)
-    max_recursive_calls_in_function: int = 0  # highest #self-calls seen in one function
+    max_recursive_calls_in_function: int = 0  
 
 
-# --------------------------------------------------------------------------
+
 # Loop + data-structure + sort visitor
-# --------------------------------------------------------------------------
+
 class LoopAndStructureVisitor(ast.NodeVisitor):
     """
     Walks the tree tracking loop nesting depth and flagging
@@ -65,9 +41,7 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
 
     def visit_While(self, node: ast.While):
         if self._is_log_pattern(node):
-            # A halving/doubling while-loop is treated as O(log n) and is
-            # NOT counted toward normal nesting depth (it doesn't scale
-            # multiplicatively the way a linear loop does).
+            
             self.findings.log_pattern_lines.append(node.lineno)
             self.generic_visit(node)
         else:
@@ -87,16 +61,7 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
 
     @staticmethod
     def _is_log_pattern(node: ast.While) -> bool:
-        """
-        Detect the classic 'shrink by a constant factor each iteration'
-        loop, e.g.:
-            while n > 1:
-                n //= 2
-            while i < n:
-                i *= 2
-        We look for an AugAssign using //, /, or * directly inside the
-        while loop's own body (not inside a nested loop/function).
-        """
+        
         for stmt in node.body:
             for sub in ast.walk(stmt):
                 if isinstance(sub, ast.AugAssign) and isinstance(
@@ -105,7 +70,7 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
                     return True
         return False
 
-    # ---- sorting -----------------------------------------------------------
+    # ---- sorting 
     def visit_Call(self, node: ast.Call):
         if isinstance(node.func, ast.Name) and node.func.id == "sorted":
             self.findings.sort_lines.append(node.lineno)
@@ -113,7 +78,6 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
             self.findings.sort_lines.append(node.lineno)
         self.generic_visit(node)
 
-    # ---- data structures (space) -------------------------------------------
     def visit_List(self, node: ast.List):
         self.findings.space_lines.append(node.lineno)
         self.generic_visit(node)
@@ -127,9 +91,7 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ListComp(self, node: ast.ListComp):
-        # A comprehension both allocates O(n) space AND performs an
-        # implicit O(n) iteration, so we record it as a loop too
-        # (at the current nesting depth) in addition to a space hit.
+        
         self.findings.space_lines.append(node.lineno)
         self._enter_loop(node)
         self.generic_visit(node)
@@ -152,18 +114,7 @@ class LoopAndStructureVisitor(ast.NodeVisitor):
 # Recursion visitor
 # --------------------------------------------------------------------------
 class RecursionVisitor(ast.NodeVisitor):
-    """
-    For every function definition, counts how many times the function
-    calls itself within its own body. This lets us distinguish:
-
-      * 0 self-calls  -> not recursive
-      * 1 self-call   -> linear recursion, e.g. factorial(n-1)   -> O(n)
-      * 2+ self-calls -> branching recursion, e.g. fib(n-1)+fib(n-2) -> O(2^n)
-
-    We only count calls that appear in the function's own body, and we
-    stop descending into any *nested* function definition with a
-    different name so an inner helper's calls aren't misattributed.
-    """
+    
 
     def __init__(self, findings: Findings):
         self.findings = findings
@@ -176,10 +127,8 @@ class RecursionVisitor(ast.NodeVisitor):
             self.findings.max_recursive_calls_in_function = max(
                 self.findings.max_recursive_calls_in_function, call_count
             )
-        # Still visit the body so nested function defs are analyzed too.
         self.generic_visit(node)
 
-    # Async defs behave the same way for this MVP's purposes.
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def _count_self_calls(self, func_name: str, body):
@@ -195,12 +144,10 @@ class RecursionVisitor(ast.NodeVisitor):
                 inner_self.generic_visit(call_node)
 
             def visit_FunctionDef(inner_self, nested_node: ast.FunctionDef):
-                # Don't descend into a differently-named nested function;
-                # its calls belong to itself, not to `func_name`.
+                
                 if nested_node.name == func_name:
                     inner_self.generic_visit(nested_node)
-                # else: skip (do not generic_visit) to avoid double counting
-                # when RecursionVisitor.visit_FunctionDef reaches it separately.
+                
 
         counter = _InnerCallCounter()
         for stmt in body:
@@ -209,16 +156,9 @@ class RecursionVisitor(ast.NodeVisitor):
         return count, lines
 
 
-# --------------------------------------------------------------------------
 # Public entry point
-# --------------------------------------------------------------------------
 def analyze(tree: ast.AST):
-    """
-    Run all visitors over the parsed tree and combine their findings
-    into a final time/space complexity estimate.
-
-    Returns a dict matching the AnalyzeResponse model.
-    """
+    
     findings = Findings()
 
     LoopAndStructureVisitor(findings).visit(tree)
@@ -245,24 +185,7 @@ def analyze(tree: ast.AST):
 
 
 def _estimate_time_complexity(f: Findings):
-    """
-    Priority order (highest complexity signal wins), matching the
-    rules given in the spec:
-
-      1. Branching recursion (2+ self-calls)   -> O(2^n)
-      2. Linear recursion (1 self-call)        -> O(n)
-      3. Triple-nested loops                   -> O(n^3)
-      4. Double-nested loops                   -> O(n^2)
-      5. Single loop                           -> O(n)
-      6. sorted()/.sort() with no loops         -> O(n log n)
-      7. Halving/doubling while-loop only       -> O(log n)
-      8. Nothing detected                      -> O(1)
-
-    Note: sorting *combined* with an outer loop containing the sort
-    call would realistically be O(n^2 log n) etc., but for MVP
-    purposes we report the dominant loop-nesting term and mention the
-    sort in the notes, since interview snippets rarely stack these.
-    """
+    
     notes = []
 
     if f.recursion_detected:
@@ -309,15 +232,7 @@ def _estimate_time_complexity(f: Findings):
 
 
 def _estimate_space_complexity(f: Findings):
-    """
-    Space heuristic:
-
-      * Branching recursion  -> O(n)  (call stack depth is O(n) even
-                                        though the *time* is O(2^n))
-      * Linear recursion     -> O(n)  (call stack)
-      * List/dict/set created-> O(n)
-      * Otherwise            -> O(1)
-    """
+    
     notes = []
 
     if f.recursion_detected:
