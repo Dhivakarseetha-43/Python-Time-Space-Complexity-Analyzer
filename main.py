@@ -1,15 +1,4 @@
-"""
-main.py
--------
-FastAPI application entry point.
 
-Exposes a single endpoint:
-
-    POST /analyze   { "code": "..." }  ->  AnalyzeResponse
-
-Also serves the static frontend (frontend/index.html) so the whole
-MVP can be run with a single command.
-"""
 
 from pathlib import Path
 
@@ -28,7 +17,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Permissive CORS since this is a local/demo MVP with no auth.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,11 +29,7 @@ FRONTEND_DIR = Path(__file__).resolve().parent
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze_code(payload: AnalyzeRequest):
-    """
-    Parse the submitted Python code and return an estimated time/space
-    complexity, along with the lines responsible and a few structural
-    details (loop nesting depth, whether recursion was detected).
-    """
+    
     try:
         tree = parse_code(payload.code)
     except CodeParseError as exc:
@@ -57,7 +41,6 @@ def analyze_code(payload: AnalyzeRequest):
 
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    """Serve the single-page frontend."""
     index_path = FRONTEND_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Frontend not found.")
